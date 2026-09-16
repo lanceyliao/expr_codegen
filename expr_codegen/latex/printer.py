@@ -4,9 +4,21 @@ from sympy.printing.latex import LatexPrinter, accepted_latex_functions
 
 
 class ExprLatexPrinter(LatexPrinter):
-    """改版的Latex表达式打印。
-
-    主要解决不少函数和符号中的下划线被转成下标的问题
+    """LaTeX 表达式打印机，解决下划线被转成下标的问题
+    
+    高级用法：
+    1. 继承 sympy.LatexPrinter
+    2. 重写 _hprint_Function 处理函数名中的下划线
+    3. 重写 _print_Symbol 处理符号中的下划线
+    
+    主要解决的问题：
+    - 默认的 LatexPrinter 会将下划线 _ 转换为下标
+    - 这会导致函数名如 ts_mean 被错误渲染
+    - 本打印机将 _ 替换为 \_ 保持原样
+    
+    注意：
+    - 用于生成数学公式显示
+    - 在 VSCode 或 Notebook 中可正常显示
     """
 
     def _print(self, expr, **kwargs) -> str:
@@ -53,6 +65,17 @@ class ExprLatexPrinter(LatexPrinter):
             self._print_level -= 1
 
     def _hprint_Function(self, func: str) -> str:
+        """打印函数名，处理下划线
+        
+        高级用法：
+        1. 将下划线替换为 \_ 避免被转成下标
+        2. 检查是否为已接受的 LaTeX 函数
+        3. 使用 \operatorname 包装非标准函数名
+        
+        转换示例：
+        - ts_mean -> \operatorname{ts_mean}
+        - abs -> \abs (已接受)
+        """
         # func = self._deal_with_super_sub(func)
         superscriptidx = -1  # func.find("^")
         subscriptidx = -1  # func.find("_")
@@ -79,6 +102,15 @@ class ExprLatexPrinter(LatexPrinter):
         return name
 
     def _print_Symbol(self, expr: Symbol, style='plain'):
+        """打印符号变量，处理下划线
+        
+        高级用法：
+        1. 检查 symbol_names 设置中是否有自定义名称
+        2. 将下划线替换为 \_ 避免被转成下标
+        
+        转换示例：
+        - _x_0 -> \_x\_0
+        """
         name: str = self._settings['symbol_names'].get(expr)
         if name is not None:
             return name
@@ -112,13 +144,45 @@ class ExprLatexPrinter(LatexPrinter):
 
 
 def latex(expr, mode='equation*', mul_symbol='times', **settings):
-    """表达式转LATEX字符串"""
+    """将表达式转换为 LaTeX 字符串
+    
+    高级用法：
+    1. 使用 ExprLatexPrinter 进行打印
+    2. 支持多种 LaTeX 模式
+    3. 支持乘法符号自定义
+    
+    Parameters
+    ----------
+    expr : sympy.Expr
+        要转换的表达式
+    mode : str
+        LaTeX 模式，如 'equation*', 'inline'
+    mul_symbol : str
+        乘法符号，如 'times', 'cdot'
+    **settings : dict
+        其他打印设置
+    
+    Returns
+    -------
+    str
+        LaTeX 字符串
+    """
     settings.update({'mode': mode, 'mul_symbol': mul_symbol})
     return ExprLatexPrinter(settings).doprint(expr)
 
 
 def display_latex(expr):
-    """显示LATEX表达式，在VSCode或Notebook中显示正常"""
+    """在 VSCode 或 Notebook 中显示 LaTeX 表达式
+    
+    高级用法：
+    1. 使用 IPython.display 显示 Markdown
+    2. 自动转换为 LaTeX 格式
+    3. 支持 Jupyter Notebook 和 VSCode
+    
+    注意：
+    - 需要 IPython 环境
+    - 在纯 Python 环境中可能无法使用
+    """
     from IPython.display import Markdown, display
 
     return display(Markdown(latex(expr)))

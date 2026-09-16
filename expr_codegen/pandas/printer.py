@@ -54,6 +54,15 @@ class PandasStrPrinter(StrPrinter):
             self._print_level -= 1
 
     def _print_Symbol(self, expr):
+        """打印符号变量
+        
+        与 polars 的差异：
+        - 使用 g[expr.name] 访问 DataFrame 列
+        - 保留字（_NONE_, _TRUE_, _FALSE_）直接返回
+        
+        注意：
+        - 这种语法适合 pandas 的 DataFrame 列访问
+        """
         if expr.name in ('_NONE_', '_TRUE_', '_FALSE_'):
             return expr.name
         return f"g[{expr.name}]"

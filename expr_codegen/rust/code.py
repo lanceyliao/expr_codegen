@@ -11,7 +11,19 @@ from expr_codegen.rust.printer import RustStrPrinter
 
 
 def get_groupby_from_tuple(tup, func_name, drop_cols):
-    """从传入的元组中生成分组运行代码"""
+    """根据分组类型生成 Rust Polars 分组代码
+    
+    与 polars 的差异：
+    - 使用 SortMultipleOptions::default()
+    - 使用 Selector::ByName 删除列
+    - 列名需要 .into() 转换
+    - 语句以 ; 结尾
+    
+    分组类型说明：
+    - TS: 按资产和时间排序，使用 sort([_ASSET_, _DATE_])
+    - CS: 按日期排序，使用 sort([_DATE_])
+    - GP: 按日期和自定义分组排序
+    """
     prefix2, *_ = tup
     if len(drop_cols) > 0:
         drop_cols = [f'"{c}".into()' for c in drop_cols]
@@ -47,7 +59,49 @@ def codegen(exprs_ldl: ListDictList, exprs_src, syms_dst,
             over_null: Literal['order_by', 'partition_by', None] = 'partition_by',
             ge_date_idx: int = 0,
             **kwargs):
-    """基于模板的代码生成"""
+    """基于 Jinja2 模板的 Rust Polars 代码生成
+    
+    与 polars 的差异：
+    - 使用 RustStrPrinter 打印表达式
+    - 生成 Rust 语法（.into(), .unwrap(), ;）
+    - 使用 over_with_options 而不是 over
+    - 使用 WindowMapping::default()
+    - 函数名使用下划线而不是双下划线
+    - 没有 symbols_to_code
+    - 使用 template.rs.j2
+    
+    Rust 特有语法：
+    - col("x").is_not_null() 检查空值
+    - all_horizontal 组合多个条件
+    - over_with_options 使用 Option 类型
+    - SortOptions::default() 排序选项
+    
+    Parameters
+    ----------
+    exprs_ldl : ListDictList
+        分层的表达式列表
+    exprs_src : list
+        源表达式列表
+    syms_dst : list
+        目标符号列表
+    filename : str
+        模板文件名
+    date : str
+        日期字段名
+    asset : str
+        资产字段名
+    extra_codes : Sequence[str]
+        额外的代码片段
+    over_null : Literal
+        空值处理方式
+    ge_date_idx : int
+        过滤最后 N 天的索引
+    
+    Returns
+    -------
+    str
+        生成的 Rust 代码字符串
+    """
     if filename is None:
         filename = 'template.rs.j2'
 

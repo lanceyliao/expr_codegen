@@ -29,28 +29,59 @@ except ImportError:
     _pl_DataFrame = None
     _pl_LazyFrame = None
 
+# 高级用法：TypeVar 定义类型变量，用于类型注解
+# 表示 DataFrame 可以是 _pl_LazyFrame、_pl_DataFrame 或 _pd_DataFrame 中的任意一种
+# 这样可以在类型检查时支持多种 DataFrame 类型
 DataFrame = TypeVar('DataFrame', _pl_LazyFrame, _pl_DataFrame, _pd_DataFrame)
 
 # ===============================
 # TypeError: expecting bool or Boolean, not `ts_delay(X, 3)`.
 # ts_delay(X, 3) & ts_delay(Y, 3)
+# 高级用法：修改 sympy 内部函数，绕过类型检查
+# sympy 的 boolalg.as_Boolean 会检查参数是否为布尔类型，但我们的表达式中可能包含非布尔类型的函数
+# 通过替换为 lambda x: x，跳过类型检查，允许任意表达式参与布尔运算
 boolalg.as_Boolean = lambda x: x
 
 
 # AttributeError: 'StrictGreaterThan' object has no attribute 'diff'
 # ts_count(open > 1, 2) == 2
+# 高级用法：动态为 sympy.Expr 类添加方法
+# sympy 的比较表达式（如 StrictGreaterThan）默认没有 diff 方法
+# 通过动态添加 _diff 方法，支持对比较表达式求导
+# evaluate=False 阻止求导时的自动化简，保持表达式结构
 def _diff(self, *symbols, **assumptions):
     assumptions.setdefault("evaluate", False)
     from sympy.core.function import _derivative_dispatch
     return _derivative_dispatch(self, *symbols, **assumptions)
 
 
+# 动态为 sympy.Expr 类添加 diff 方法
+# 这是 Python 的猴子补丁（monkey patching）技术，在运行时修改类的方法
 Expr.diff = _diff
 
 
 # ===============================
 
 def simplify2(expr, skip_simplify: bool):
+    """带跳过选项的表达式简化
+    
+    高级用法：
+    1. skip_simplify 参数用于遗传算法场景
+    2. 遗传算法中常出现 OPEN/OPEN 这样的表达式，会被简化成 1
+    3. 跳过简化可以保持原始表达式结构，便于后续处理
+    
+    Parameters
+    ----------
+    expr : sympy.Expr
+        输入表达式
+    skip_simplify : bool
+        是否跳过简化
+    
+    Returns
+    -------
+    sympy.Expr
+        简化后的表达式（或原表达式）
+    """
     # OPEN/OPEN会被简化成1，遗传算法中常出现，可以跳过简化
     if skip_simplify:
         return expr
@@ -150,26 +181,38 @@ class ExprTool:
         return exprs_list
 
     def cse(self, exprs, symbols_repl=None, exprs_src=None, skip_simplify=False):
-        """多个子公式+长公式，提取公共公式
-
+        """公共子表达式消除（Common Subexpression Elimination）
+        
+        高级用法：
+        1. 使用 sympy.cse 提取重复的表达式，减少重复计算
+        2. symbols_repl=numbered_symbols('_x_') 生成带编号的中间变量
+        3. optimizations 参数控制优化策略
+        4. repl 是替换列表（公共表达式），redu 是简化后的表达式
+        
+        核心算法：
+        - cse 会将重复的表达式提取出来，用变量替换
+        - 例如：ts_sum(x, 10) + ts_sum(x, 10) 会变成 _x_0 + _x_0
+        - 其中 _x_0 = ts_sum(x, 10)
+        
         Parameters
         ----------
-        exprs
+        exprs : list
             表达式列表
-        symbols_repl
-            中间字段名迭代器
-        exprs_src
+        symbols_repl : iterator
+            中间字段名迭代器，如 numbered_symbols('_x_')
+        exprs_src : list
             最终字段名列表
-
+        skip_simplify : bool
+            是否跳过优化
+        
         Returns
         -------
-        graph_dag
-            依赖关系的有向无环图
-        graph_key
-            每个函数分组用key
-        graph_exp
-            表达式
-
+        list
+            合并后的表达式列表（包含公共表达式和最终表达式）
+        
+        注意：
+        对于表达式右边相同，左边不同的情况，会当成一个处理
+        例如：A = x + y, B = x + y，会被识别为同一个公共表达式
         """
         self.exprs_names = [k for k, v, c in exprs_src]
         # 包含了注释信息
@@ -177,8 +220,12 @@ class ExprTool:
 
         # 注意：对于表达式右边相同，左边不同的情况，会当成一个处理
         if skip_simplify:
+            # 跳过优化，直接进行 CSE
             repl, redu = cse(_exprs, symbols_repl, optimizations=[])
         else:
+            # 使用 sub_pre 和 sub_post 优化策略
+            # sub_pre: 替换前的优化
+            # sub_post: 替换后的优化
             repl, redu = cse(_exprs, symbols_repl, optimizations=[(cse_opts.sub_pre, cse_opts.sub_post), ])
 
         outputs_len = len(exprs_src)
@@ -187,6 +234,7 @@ class ExprTool:
         symbols_redu = iter(exprs_src)
         for expr in redu[-outputs_len:]:
             # 可能部分表达式只在之前出现过，后面完全用不到如，ts_rank(ts_decay_linear(x_147, 11.4157), 6.72611)
+            # 只取最后 outputs_len 个表达式（对应最终输出）
             variable = next(symbols_redu)
             a = symbols(variable[0])
             new_redu.append((a, expr, variable[2]))
@@ -293,6 +341,9 @@ class ExprTool:
 
         if format:
             # 格式化。在遗传算法中没有必要
+            # 高级用法：使用 black 库的 format_str 进行代码格式化
+            # line_length=600 设置行长限制（比默认的 88 更大，适合生成的复杂表达式）
+            # magic_trailing_comma=True 在多行结构中自动添加尾随逗号
             codes = format_str(codes, mode=Mode(line_length=600, magic_trailing_comma=True))
 
         return codes, G
@@ -312,7 +363,38 @@ class ExprTool:
                   skip_simplify: bool = False,
                   skip_columns: Iterable[str] = (),
                   **kwargs) -> str:
-        """通过字符串生成代码， 加了缓存，多次调用不重复生成"""
+        """通过字符串生成代码，带缓存功能
+        
+        高级用法：
+        1. @lru_cache(maxsize=64) 装饰器缓存结果，相同输入直接返回缓存
+        2. 缓存基于所有参数的哈希值，包括字符串和可哈希对象
+        3. 适用于遗传算法等场景，避免重复生成相同代码
+        
+        注意事项：
+        - 缓存可能导致调试时看不到最新代码
+        - 需要留意日志输出，确认是否使用了缓存
+        - maxsize=64 表示最多缓存 64 个不同的输入组合
+        
+        Parameters
+        ----------
+        source : str
+        主要代码字符串
+        *more_sources : str
+        额外的代码字符串
+        extra_codes : str
+            额外代码（如正则表达式、辅助函数）
+        output_file : str
+            输出文件路径
+        convert_xor : bool
+            是否将 ^ 转换为乘方
+        style : str
+            代码风格
+        
+        Returns
+        -------
+        str
+            生成的代码字符串
+        """
         raw, exprs_list = sources_to_exprs(self.globals_, source, *more_sources, convert_xor=convert_xor)
 
         # 生成代码
@@ -333,8 +415,10 @@ class ExprTool:
 
         # 移回到cache，防止多次调用多次保存
         if hasattr(output_file, "write"):
+            # output_file 是文件对象（如 StringIO）
             output_file.write(code)
         elif output_file is not None:
+            # output_file 是文件路径字符串
             output_file = pathlib.Path(output_file)
             logger.info(f'save to {output_file.absolute()}')
             with open(output_file, 'w', encoding='utf-8') as f:
@@ -345,15 +429,62 @@ class ExprTool:
 
 @lru_cache(maxsize=64, typed=True)
 def _get_func_from_code_py(code: str):
+    """从代码字符串动态获取函数
+    
+    高级用法：
+    1. exec(code, globals_) 动态执行 Python 代码字符串
+    2. typed=True 表示区分参数类型（如 str 和 bytes 会视为不同缓存）
+    3. 假设生成的代码中有一个名为 main 的函数
+    
+    安全注意事项：
+    - exec 可以执行任意代码，仅用于可信的代码生成场景
+    - 不要对用户输入的代码使用 exec
+    
+    Parameters
+    ----------
+    code : str
+        Python 代码字符串
+    
+    Returns
+    -------
+    callable
+        代码中定义的 main 函数
+    """
     logger.info(f'get func from code py')
     globals_ = {}
+    # 动态执行代码字符串，在 globals_ 命名空间中定义函数
     exec(code, globals_)
+    # 返回 main 函数
     return globals_['main']
 
 
 @lru_cache(maxsize=64, typed=True)
 def _get_func_from_module(module: str):
-    """"可下断点调试"""
+    """从模块动态导入函数（可下断点调试）
+    
+    高级用法：
+    1. __import__(module, fromlist=['*']) 动态导入模块
+    2. fromlist=['*'] 确保导入模块本身而非包
+    3. 适用于需要调试的场景，可以直接在模块文件中设置断点
+    
+    优势：
+    - 比 exec 更安全，因为是从文件导入
+    - 支持 IDE 断点调试
+    - 代码可读性更好
+    
+    Parameters
+    ----------
+    module : str
+        模块名（如 'my_module' 或 'package.module'）
+    
+    Returns
+    -------
+    callable
+        模块中定义的 main 函数
+    
+    注意：
+    可能调用到其他目录下的同名模块，所以保存的文件名要有辨识度
+    """
     m = __import__(module, fromlist=['*'])
     logger.info(f'get func from module {m}')
     return m.main
@@ -494,11 +625,18 @@ def codegen_exec(df: Union[DataFrame, None],
         pass
 
     # 此代码来自于sympy.var
+    # 高级用法：使用 inspect.currentframe().f_back 获取调用者的全局命名空间
+    # 这样可以访问调用者代码中定义的符号（如 OPEN, CLOSE 等）
+    # f_back 表示调用者的栈帧，f_globals 是该栈帧的全局命名空间
     frame = inspect.currentframe().f_back
     _TOOL_.globals_ = frame.f_globals.copy()
+    # 删除 frame 引用，避免循环引用导致的内存泄漏
     del frame
 
     more_sources = [c if isinstance(c, str) else inspect.getsource(c) for c in codes]
+    # 高级用法：inspect.getsource(c) 获取函数或类的源代码字符串
+    # 这样可以传入函数对象，自动提取其源代码进行转换
+    # 支持混合传入字符串和函数对象
 
     code = _TOOL_._get_code(
         *more_sources,

@@ -16,6 +16,22 @@ import pandas as pd
 
 
 class GlobalVariable(object):
+    """全局变量容器，兼容 DataFrame 和 tuple 存储
+    
+    高级用法：
+    1. 使用 dict 存储 tuple 值（如 MACD 返回的多个值）
+    2. 使用 DataFrame 存储普通 Series
+    3. __getitem__ 优先从 dict 读取，再从 DataFrame 读取
+    4. __setitem__ 根据 value 类型选择存储位置
+    
+    应用场景：
+    - 解决 A,B,C=MACD() 无法生成 DAG 的问题
+    - 将 tuple 存储在 dict 中，Series 存储在 DataFrame 中
+    - 避免直接将 tuple 放入 DataFrame 列
+    
+    注意：
+    - tuple 存入 dict 时，在 DataFrame 中占位（False）避免 drop 报错
+    """
     def __init__(self):
         self.dict = {}
         self.df = pd.DataFrame()

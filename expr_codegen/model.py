@@ -11,17 +11,22 @@ _RESERVED_WORD_ = {'_NONE_', '_TRUE_', '_FALSE_'}
 
 
 class ListDictList:
-    """嵌套列表
-
-    1. 最外层是 列表[]
-    2. 第二层是 字典{}
-    3. 第三层是 列表[]
-
+    """嵌套列表数据结构，用于组织分层的表达式
+    
+    高级用法：
+    1. 三层嵌套结构：列表 -> 字典 -> 列表
+    2. 用于存储按分组方式（ts/cs/gp）组织的表达式
+    3. 支持动态添加、合并、优化操作
+    
+    数据结构示例：
     [
-    {'ts': [1, 2], 'cs': [2], 'gp_date': [2], 'gp_key': [2], }
-    {'ts': [1], 'cs': [1],}
+        {'ts': [1, 2], 'cs': [2], 'gp_date': [2], 'gp_key': [2], }
+        {'ts': [1], 'cs': [1],}
     ]
-
+    
+    - 最外层列表：表示不同的计算层（按依赖关系分层）
+    - 第二层字典：同一层内按分组方式（ts/cs/gp）分类
+    - 第三层列表：同一分组方式下的表达式列表
     """
 
     def __init__(self):
@@ -63,7 +68,18 @@ class ListDictList:
         self._list = new_list
 
     def back_merge(self):
-        """向上合并，将CL类型向前合并"""
+        """向上合并，将相同类型的表达式向前合并
+        
+        高级用法：
+        1. 使用 reduce 函数扁平化嵌套结构
+        2. reduce(lambda x, y: x + list(y.keys()), self._list, []) 将所有层的 keys 合并成一个列表
+        3. 相邻的相同 key 合并，减少 groupby 次数
+        
+        优化目的：
+        减少运行时的 groupby 次数，提高性能
+        例如：两层都有 ts 分组，可以合并成一层
+        """
+        # reduce 将多层字典的 keys/values 合并成扁平列表
         keys = reduce(lambda x, y: x + list(y.keys()), self._list, [])
         values = reduce(lambda x, y: x + list(y.values()), self._list, [])
 
@@ -76,10 +92,12 @@ class ListDictList:
             # if (last_v is not None) and (k[0] == CL) and (last_k[0] != GP):
             if (last_v is not None) and (k == last_k):
                 # print(1, k, last_k)
+                # 相同 key，合并到上一层
                 last_v.extend(v)
                 v.clear()
             else:
-                # print(2, k, last_k)
+                # print(2, k, last_k)                
+                # 不同 key，保留
                 new_keys.append(k)
                 new_values.append(v)
                 last_v = v
@@ -96,7 +114,29 @@ class ListDictList:
         self.filter_empty()
 
     def drop_symbols(self):
-        """组装一种数据结构，用来存储之后会用到的变量名，用于提前删除不需要的变量"""
+        """计算每个步骤之后可以删除的变量名
+        
+        高级用法：
+        1. 反向遍历计算累积变量集合
+        2. 使用集合差集计算不再需要的变量
+        3. 用于内存优化，提前删除不再使用的中间变量
+        
+        算法说明：
+        - l1: 每个表达式块使用的变量集合
+        - l2: 从当前行到最后一行的累积变量集合（反向计算）
+        - l3: 当前行之后不再出现的变量（可删除）
+        
+        例如：
+        第1行使用 {A, B}
+        第2行使用 {B, C}
+        第3行使用 {C}
+        
+        反向累积：
+        l2 = [{A,B,C}, {B,C}, {C}, {}]
+        l3 = [{A}, {B}, {C}]
+        
+        表示第1行后可删除A，第2行后可删除B，第3行后可删除C
+        """
         # 获取每一小块所用到的所有变量名
         l1 = []
         for row in self._list:
@@ -109,6 +149,7 @@ class ListDictList:
                 l1.append(set(vv))
 
         # 得到此行与之后都会出现的变量名
+        # 反向遍历，计算累积集合
         l2 = [set()]
         s = set()
         for i in reversed(l1):
@@ -117,6 +158,7 @@ class ListDictList:
         l2 = list(reversed(l2))
 
         # 计算之后不会再出现的变量名
+        # l2[i] - l2[i+1] 表示第i行之后不再出现的变量
         l3 = [list(s - e) for s, e in zip(l2[:-1], l2[1:])]
 
         return l3
@@ -135,22 +177,41 @@ def score2(row) -> float:
 
 
 def chain_create(nested_list):
-    """接龙。多个列表，头尾相连
-
-    测试用表达式
+    """接龙算法：优化多层表达式的执行顺序
+    
+    高级用法：
+    1. itertools.permutations 生成每层的所有排列
+    2. itertools.product 生成层与层之间的笛卡尔积
+    3. 使用评分函数选择最优的执行顺序
+    
+    优化目的：
+    减少数据在不同 groupby 之间的传递次数，提高性能
+    
+    测试用表达式：
     ma_10 = ts_mean(CLOSE, 10)
     MAMA_20 = ts_mean(ma_10, 20)
     alpha_031 = ((cs_rank(cs_rank(cs_rank(ts_decay_linear((-1 * cs_rank(cs_rank(ts_delta(CLOSE, 10)))), 10))))))
-
+    
+    算法说明：
+    1. 对每一层的字典项生成所有排列（permutations）
+    2. 生成层与层之间的笛卡尔积（product），得到所有可能的组合
+    3. 对每种组合计算得分（score1 + score2）
+    4. 选择得分最高的组合作为最优执行顺序
+    
+    评分标准：
+    - score1: 首尾相连加分（相邻层使用相同分组方式）
+    - score2: 最后一个 ts 靠前加分（时序计算优先）
     """
     perms = []
     for d in nested_list:
         # 每一层生成排列
+        # permutations(d.items()) 生成字典项的所有排列
         perms.append(permutations(d.items()))
 
     last_score = float('-inf')
     last_row = None
     # 生成笛卡尔积
+    # product(*perms) 生成所有层排列的组合
     for row in product(*perms):
         result = score1(row) + score2(row)
         # print(result, row)
@@ -164,7 +225,28 @@ def chain_create(nested_list):
 # ==========================
 
 def create_dag_exprs(exprs):
-    """根据表达式字典生成DAG"""
+    """根据表达式列表生成有向无环图（DAG）
+    
+    高级用法：
+    1. 使用 networkx.DiGraph 创建有向无环图
+    2. 节点表示表达式，边表示依赖关系
+    3. zero_indegree 找到入度为0的节点（源节点）
+    
+    图结构说明：
+    - 节点：每个表达式（包括中间变量和最终输出）
+    - 边：从依赖节点指向被依赖节点
+    - 例如：A = B + C，则有边 B->A 和 C->A
+    
+    Parameters
+    ----------
+    exprs : list
+        表达式列表，每个元素为 (symbol, expr, comment)
+    
+    Returns
+    -------
+    nx.DiGraph
+        表达式依赖关系的有向无环图
+    """
     # 创建有向无环图
     G = nx.DiGraph()
 
@@ -172,6 +254,7 @@ def create_dag_exprs(exprs):
         # if symbol.name == 'GP_0':
         #     test = 1
         if expr.is_Symbol:
+            # 如果表达式是符号（如 OPEN），直接添加边
             G.add_node(symbol.name, symbol=symbol, expr=expr, comment=comment)
             G.add_edge(expr.name, symbol.name)
         else:
@@ -182,13 +265,14 @@ def create_dag_exprs(exprs):
                 # 由于边的原因，这里会主动生成一些源节点
                 G.add_edge(sym, symbol.name)
             if len(syms) == 0:
-                # GP_0033=log(1/2400)
+                # GP_0033=log(1/2400) 这种常量表达式
                 if hasattr(expr, 'name'):
                     G.add_edge(expr.name, symbol.name)
                 else:
                     G.add_edge(str(expr), symbol.name)
 
     # 源始因子，添加属性
+    # zero_indegree 找到入度为0的节点（没有依赖的节点）
     for node in zero_indegree(G):
         s = symbols(node)
         G.nodes[node]['symbol'] = s
@@ -201,7 +285,35 @@ def create_dag_exprs(exprs):
 
 
 def init_dag_exprs(G, func, func_kwargs, date, asset):
-    """使用表达式信息初始化DAG"""
+    """使用表达式信息初始化 DAG 节点属性
+    
+    高级用法：
+    1. nx.topological_generations 按拓扑排序分层遍历图
+    2. 为每个节点计算分类信息（children、key、symbols）
+    3. generation 表示节点所在的层（依赖层级）
+    
+    拓扑排序说明：
+    - 按依赖关系分层，先计算依赖节点，再计算被依赖节点
+    - 例如：A = B + C, B = D，则分层为 [D], [B], [A]
+    
+    Parameters
+    ----------
+    G : nx.DiGraph
+        有向无环图
+    func : callable
+        表达式分类函数
+    func_kwargs : dict
+        分类函数的参数
+    date : str
+        日期字段名
+    asset : str
+        资产字段名
+    
+    Returns
+    -------
+    nx.DiGraph
+        更新后的图，每个节点包含 children、key、symbols、gen 属性
+    """
     for i, generation in enumerate(nx.topological_generations(G)):
         # print(i, generation)
         for node in generation:
@@ -328,9 +440,36 @@ def draw_expr_tree(G: nx.DiGraph, root: str, ax=None):
 
 def skip_expr_node(G: nx.DiGraph, node, keep_nodes):
     """跳过中间节点，将两端的节点直接连接起来，同时更新表达式
-
+    
+    高级用法：
+    1. 使用 xreplace 替换表达式中的符号
+    2. 使用 product 生成所有前驱和后继的组合边
+    3. 用于简化 DAG，减少不必要的中间节点
+    
+    优化场景：
     1. (A,B,C) 模式，直接成 (A,C)
+       - B 是简单表达式（如 -A），可以直接内联
     2. (A,B,C), (D, B) 模式，变成 (A,C),(D,C)
+       - B 被多个节点引用，但表达式简单，可以内联
+    
+    Parameters
+    ----------
+    G : nx.DiGraph
+        有向无环图
+    node : str
+        要跳过的节点名
+    keep_nodes : list
+        需要保留的节点列表
+    
+    Returns
+    -------
+    nx.DiGraph
+        更新后的图
+    
+    算法说明：
+    1. 将当前节点的表达式内联到所有后继节点中
+    2. 使用 product 生成所有前驱->后继的边
+    3. 删除当前节点
     """
     if node in keep_nodes:
         return G
@@ -347,10 +486,14 @@ def skip_expr_node(G: nx.DiGraph, node, keep_nodes):
 
     for s in succ:
         e = G.nodes[s]['expr']
+        # xreplace 将表达式中的 symbol 替换为 expr
+        # 例如：symbol=_x_0, expr=-A，则 _x_0 + B 变成 -A + B
         e = e.xreplace({symbol: expr})
         G.nodes[s]['expr'] = e
 
     # 这里用了product生成多个关联边
+    # product(pred, succ) 生成所有前驱和后继的组合
+    # 例如 pred=[A,D], succ=[C]，则生成边 A->C, D->C
     G.add_edges_from(product(pred, succ))
     G.remove_node(node)
     return G
@@ -386,7 +529,28 @@ def dag_middle(G, exprs_names, skip_columns, func, func_kwargs, date, asset, ski
 
 
 def dag_end(G):
-    """有向无环图流转"""
+    """将 DAG 转换为 ListDictList 结构，用于代码生成
+    
+    高级用法：
+    1. 按拓扑排序遍历 DAG，转换为分层结构
+    2. 剔除第0层（基础因子如 CLOSE）
+    3. 过滤保留字（_NONE_, _TRUE_, _FALSE_）
+    
+    转换流程：
+    DAG -> ListDictList -> 代码生成
+    
+    Parameters
+    ----------
+    G : nx.DiGraph
+        有向无环图
+    
+    Returns
+    -------
+    tuple
+        (ListDictList, nx.DiGraph)
+        - ListDictList: 分层的表达式结构
+        - nx.DiGraph: 原始图
+    """
     exprs_ldl = ListDictList()
 
     for i, generation in enumerate(nx.topological_generations(G)):

@@ -10,7 +10,18 @@ from expr_codegen.pandas.printer import PandasStrPrinter
 
 
 def get_groupby_from_tuple(tup, func_name, drop_cols):
-    """从传入的元组中生成分组运行代码"""
+    """根据分组类型生成 Pandas groupby 代码
+    
+    与 polars 的差异：
+    - 使用 groupby().apply() 而不是 sort().over()
+    - 使用 group_keys=False 避免索引问题
+    - 使用 drop(columns=) 而不是 drop()
+    
+    分组类型说明：
+    - TS: 按资产分组，使用 groupby(by=[_ASSET_])
+    - CS: 按日期分组，使用 groupby(by=[_DATE_])
+    - GP: 按日期和自定义分组，使用 groupby(by=[_DATE_, group])
+    """
     prefix2, *_ = tup
 
     if len(drop_cols)>0:
@@ -33,6 +44,16 @@ def get_groupby_from_tuple(tup, func_name, drop_cols):
 
 
 def symbols_to_code(syms):
+    """将符号列表转换为 Pandas 变量引用代码
+    
+    与 polars 的差异：
+    - 不使用 pl.col 创建列引用
+    - 直接返回变量名列表
+    - 适合 pandas DataFrame 的列访问
+    
+    转换示例：
+    - ['CLOSE', 'OPEN'] -> CLOSE, OPEN
+    """
     a = [f"{s}" for s in syms]
     b = [f"'{s}'" for s in syms]
     return f"""_ = [{','.join(b)}]
@@ -45,7 +66,39 @@ def codegen(exprs_ldl: ListDictList, exprs_src, syms_dst,
             extra_codes: Sequence[str] = (),
             ge_date_idx: int = 0,
             **kwargs):
-    """基于模板的代码生成"""
+    """基于 Jinja2 模板的 Pandas 代码生成
+    
+    与 polars 的差异：
+    - 使用 PandasStrPrinter 打印表达式
+    - 生成 g.df 而不是 df.with_columns
+    - 使用 groupby().apply() 而不是 over()
+    - 时序需要 sort_values
+    - 没有 over_null 参数
+    
+    Parameters
+    ----------
+    exprs_ldl : ListDictList
+        分层的表达式列表
+    exprs_src : list
+        源表达式列表
+    syms_dst : list
+        目标符号列表
+    filename : str
+        模板文件名
+    date : str
+        日期字段名
+    asset : str
+        资产字段名
+    extra_codes : Sequence[str]
+        额外的代码片段
+    ge_date_idx : int
+        过滤最后 N 天的索引
+    
+    Returns
+    -------
+    str
+        生成的代码字符串
+    """
     if filename is None:
         filename = 'template.py.j2'
 

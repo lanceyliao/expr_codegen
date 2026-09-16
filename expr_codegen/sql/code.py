@@ -18,7 +18,52 @@ def codegen(exprs_ldl: ListDictList, exprs_src, syms_dst,
             table_name: str = 'self',
             ge_date_idx: int = 0,
             **kwargs):
-    """基于模板的代码生成"""
+    """基于 Jinja2 模板的 SQL 代码生成
+    
+    与 polars 的差异：
+    - 使用 SQLStrPrinter 打印表达式
+    - 生成 SQL CTE（Common Table Expression）结构
+    - 使用 OVER(PARTITION BY ... ORDER BY ...) 窗口函数
+    - 函数名使用 cte_ 前缀而不是 func_
+    - 使用反引号包裹列名
+    - 没有 symbols_to_code
+    - 使用 template.sql.j2
+    - 使用 last_func_name 链接 CTE
+    
+    SQL 特有语法：
+    - WITH ... AS (SELECT ...) 定义 CTE
+    - OVER(PARTITION BY ... ORDER BY ...) 窗口函数
+    - `x` IS NOT NULL 检查空值
+    - AND 连接多个条件
+    
+    Parameters
+    ----------
+    exprs_ldl : ListDictList
+        分层的表达式列表
+    exprs_src : list
+        源表达式列表
+    syms_dst : list
+        目标符号列表
+    filename : str
+        模板文件名
+    date : str
+        日期字段名
+    asset : str
+        资产字段名
+    extra_codes : Sequence[str]
+        额外的代码片段
+    over_null : Literal
+        空值处理方式
+    table_name : str
+        基础表名
+    ge_date_idx : int
+        过滤最后 N 天的索引（未实现）
+    
+    Returns
+    -------
+    str
+        生成的 SQL 代码字符串
+    """
     if filename is None:
         filename = 'template.sql.j2'
 

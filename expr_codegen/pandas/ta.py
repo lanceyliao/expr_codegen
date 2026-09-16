@@ -1,11 +1,18 @@
 """
-原本代码都写在printer.py中，但存在一些不足
+Pandas 技术指标函数库
+
+原本代码都写在printer.py中，但存在一些不足：
 1. 每新添函数都要修改printer.py，工作量大，不够灵活
 2. 生成的代码过于直接，不便研究分析
 3. 纯字符串拼接，没有IDE语法检查，非常容易出错
 4. 部分写法对模板侵入性高，import混乱
 
 所以有必要使用类似于polars_ta的公共库，但因目前未找到合适库，所以以下是临时版，以后要独立出去
+
+注意：
+- 这些函数是 pandas 版本的技术指标实现
+- 使用 numpy 和 pandas 的 rolling 方法
+- 部分函数依赖 talib（如果可用）
 """
 from typing import Tuple
 

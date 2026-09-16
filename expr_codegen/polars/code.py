@@ -11,7 +11,32 @@ from expr_codegen.polars.printer import PolarsStrPrinter
 
 
 def get_groupby_from_tuple(tup, func_name, drop_cols):
-    """从传入的元组中生成分组运行代码"""
+    """根据分组类型生成 Polars 分组代码
+    
+    高级用法：
+    1. 根据元组前缀判断分组类型（TS/CS/GP）
+    2. 生成对应的 sort 和 over 代码
+    3. 处理 drop_cols 删除中间变量
+    
+    分组类型说明：
+    - TS (Time Series): 按资产分组，按时间排序，使用 over(_ASSET_, order_by=_DATE_)
+    - CS (Cross Section): 按日期分组，使用 over(_DATE_)
+    - GP (Group): 按日期和自定义分组，使用 over(_DATE_, group)
+    
+    Parameters
+    ----------
+    tup : tuple
+        分组元组，如 ('ts', 'asset') 或 ('cs', 'date')
+    func_name : str
+        函数名
+    drop_cols : list
+        要删除的列名列表
+    
+    Returns
+    -------
+    str
+        生成的 Polars 代码
+    """
     prefix2, *_ = tup
 
     if len(drop_cols) > 0:
@@ -34,6 +59,25 @@ def get_groupby_from_tuple(tup, func_name, drop_cols):
 
 
 def symbols_to_code(syms):
+    """将符号列表转换为 Polars 列引用代码
+    
+    高级用法：
+    1. 生成字符串列表和带引号的字符串列表
+    2. 使用 pl.col 创建列引用
+    
+    转换示例：
+    - ['CLOSE', 'OPEN'] -> pl.col('CLOSE'), pl.col('OPEN')
+    
+    Parameters
+    ----------
+    syms : list
+        符号列表
+    
+    Returns
+    -------
+    str
+        生成的代码字符串
+    """
     a = [f"{s}" for s in syms]
     b = [f"'{s}'" for s in syms]
     return f"""_ = [{','.join(b)}]
@@ -47,7 +91,45 @@ def codegen(exprs_ldl: ListDictList, exprs_src, syms_dst,
             over_null: Literal['order_by', 'partition_by', None] = 'partition_by',
             ge_date_idx: int = 0,
             **kwargs):
-    """基于模板的代码生成"""
+    """基于 Jinja2 模板的 Polars 代码生成
+    
+    高级用法：
+    1. 使用 PolarsStrPrinter 打印表达式
+    2. 根据 ListDictList 生成分层函数
+    3. 使用 argparse 解析注释中的参数
+    4. 处理 over_null 参数控制窗口函数行为
+    
+    over_null 参数说明：
+    - 'partition_by': 将空值检查放在 PARTITION BY 中
+    - 'order_by': 将空值检查放在 ORDER BY 中
+    - None: 不处理空值
+    
+    Parameters
+    ----------
+    exprs_ldl : ListDictList
+        分层的表达式列表
+    exprs_src : list
+        源表达式列表
+    syms_dst : list
+        目标符号列表
+    filename : str
+        模板文件名
+    date : str
+        日期字段名
+    asset : str
+        资产字段名
+    extra_codes : Sequence[str]
+        额外的代码片段
+    over_null : Literal
+        空值处理方式
+    ge_date_idx : int
+        过滤最后 N 天的索引
+    
+    Returns
+    -------
+    str
+        生成的代码字符串
+    """
     if filename is None:
         filename = 'template.py.j2'
 

@@ -55,23 +55,58 @@ class RustStrPrinter(StrPrinter):
             self._print_level -= 1
 
     def _print_Symbol(self, expr):
+        """打印符号变量
+        
+        与 polars 的差异：
+        - 使用 col("expr.name") 访问列
+        - 保留字（_NONE_, _TRUE_, _FALSE_）直接返回
+        
+        注意：
+        - 这种语法适合 Rust polars 的列访问
+        """
         if expr.name in ('_NONE_', '_TRUE_', '_FALSE_'):
             return expr.name
         return f'col("{expr.name}")'
 
     def _print_Or(self, expr):
+        """打印或运算表达式
+        
+        与 polars 的差异：
+        - 使用链式 .or() 调用
+        - 使用 .join() 连接多个参数
+        - [2:] 去掉开头的 "."
+        
+        转换示例：
+        - a | b | c -> a.or(b).or(c)
+        """
         new_args = [f"or({self._print(arg)})" for arg in expr.args]
         return ".".join(new_args)[2:]
 
     def _print_Xor(self, expr):
+        """打印异或运算表达式
+        
+        与 polars 的差异：
+        - 使用链式 .xor() 调用
+        - [3:] 去掉开头的 ".x"
+        """
         new_args = [f"xor({self._print(arg)})" for arg in expr.args]
         return ".".join(new_args)[3:]
 
     def _print_And(self, expr):
+        """打印与运算表达式
+        
+        与 polars 的差异：
+        - 使用链式 .and() 调用
+        """
         new_args = [f"and({self._print(arg)})" for arg in expr.args]
         return ".".join(new_args)[3:]
 
     def _print_Not(self, expr):
+        """打印非运算表达式
+        
+        与 polars 的差异：
+        - 使用 .not() 方法
+        """
         return "(%s).not()" % self._print(expr.args[0])
 
     def _print_gp_(self, expr):
@@ -81,6 +116,18 @@ class RustStrPrinter(StrPrinter):
         return "cs_%s(%s)" % (func_name, ",".join(new_args))
 
     def _print_Integer(self, expr):
+        """打印整数
+        
+        高级用法：
+        1. inspect.stack() 获取调用栈
+        2. 检查调用者是否为特定函数
+        3. 在特定上下文中使用 lit() 包装
+        
+        注意：
+        - 在 Pow、Add、Mul、Relational 中使用 lit() 包装
+        - 其他情况下直接返回数字
+        - 这是 Rust polars 的类型要求
+        """
         caller_frame = inspect.stack()[2]
         caller_name = caller_frame.function
         if caller_name in ("_print_Pow", "_print_Add", "_print_Mul", "_print_Relational"):
@@ -89,6 +136,16 @@ class RustStrPrinter(StrPrinter):
             return super()._print_Integer(expr)
 
     def _print_Float(self, expr):
+        """打印浮点数
+        
+        高级用法：
+        1. 与 _print_Integer 类似，使用 inspect.stack 检查调用者
+        2. 在特定上下文中使用 lit() 包装
+        
+        注意：
+        - 在 Pow、Add、Mul、Relational 中使用 lit() 包装
+        - 这是 Rust polars 的类型要求
+        """
         caller_frame = inspect.stack()[2]
         caller_name = caller_frame.function
         if caller_name in ("_print_Pow", "_print_Add", "_print_Mul", "_print_Relational"):
@@ -97,6 +154,24 @@ class RustStrPrinter(StrPrinter):
             return super()._print_Float(expr)
 
     def _print_Relational(self, expr):
+        """打印关系表达式（比较运算）
+        
+        高级用法：
+        1. 使用 charmap 映射 Python 比较符到 Rust 方法
+        2. 使用链式调用格式
+        
+        映射关系：
+        - == -> eq
+        - != -> neq
+        - < -> lt
+        - > -> gt
+        - >= -> gt_eq
+        - <= -> lt_eq
+        
+        转换示例：
+        - a == b -> a.eq(b)
+        - a < b -> a.lt(b)
+        """
 
         charmap = {
             "==": "eq",
