@@ -25,11 +25,12 @@ D = _A+_B
 
 # 再也不怕出现有环了
 source = """
-_A = True+None
+# _A = True+None
 # F = 1>None
 # _A = Add(1,True)
 # 
-# _A = _A+_A
+A = A+A
+# _A = _A+_A  # 循环依赖示例：自引用，RenameTransformer 会将其重命名为 _A_0_ = _A + _A
 # _B = _A+2
 # _C = _A+_B
 # 
@@ -43,7 +44,8 @@ funcs_map = {'abs': 'abs_',
              'delay': 'ts_delay',
              }
 args_map = {'True': "TRUE", 'False': "FALSE", 'None': "NONE"}
-targets_map = {'_A': '_12'}
+targets_map = {'A': 'A12'}
+# targets_map = {}  # 空映射时，普通变量不会被重命名；下划线开头变量仍会自动添加序号
 
 tree = ast.parse(source_replace(source))
 t = RenameTransformer(funcs_map, targets_map, args_map)

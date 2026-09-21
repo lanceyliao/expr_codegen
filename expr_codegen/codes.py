@@ -439,36 +439,50 @@ class RenameTransformer(ast.NodeTransformer):
         return node
 
     def __visit_Assign(self, target: expr):
-        """处理赋值目标的重命名
+        """处理赋值目标（赋值语句左边）的重命名
         
         高级用法：
-        1. 下划线开头的变量自动添加序号
-        2. 记录所有新旧变量名用于后续处理
-        3. 常量值也可以被重命名
+        1. 下划线开头的变量自动添加序号，避免与 CSE 的 _x_ 冲突
+        2. 记录所有新旧变量名到 targets_old/targets_new，用于后续处理
+        3. 常量值也可以被重命名（如 1 -> ONE）
         
         重命名示例：
-        - _A -> _A_0_
-        - _A -> _A_1_ （第二次出现）
+        - _A -> _A_0_ （第一次出现，自动序号）
+        - _A -> _A_1_ （第二次出现，自动序号）
+        - A -> B （通过 targets_map={'A': 'B'}）
         
         注意：
-        - 这种自动重命名支持重复使用临时变量
-        - 修改会同步到 args_map，确保一致性
+        - 下划线开头的变量：targets_map 不生效（见第 465-468 行），自动添加序号
+        - 普通变量：通过 targets_map 映射重命名（见第 460 行）
+        - 修改会同步到 args_map（见第 474 行），确保赋值右边引用也被替换
+        
+        为什么同步到 args_map：
+        - 赋值右边可能引用左边重命名前的变量，需要同步替换
+        - 例如：A = A+A，如果 A -> B，需要变成 B = B+B
+        - args_map 用于在 visit_Assign 的后续步骤中替换右边的变量引用
         """
         old_target_id = target.id
+        # 尝试从 targets_map 获取映射，如果没有则保持原名
         new_target_id = self.targets_map.get(old_target_id, old_target_id)
         self.targets_old.add(old_target_id)
 
         # 赋值给下划线开头代码时，对其进行重命名，方便重复书写表达式时不冲突
+        # 注意：targets_map 对下划线开头的变量不生效，走自动序号逻辑
+        # 原因：第 416 行注释说明 "只对非下划线开头的生效"
         if old_target_id.startswith('_'):
-            # 减少与cse中_x_冲突
+            # 减少与cse中_x_冲突，自动添加序号
+            # 例如：_A -> _A_0_，_A -> _A_1_（第二次出现）
+            # len(self.targets_new) 是当前已重命名的变量数量，用作序号
             new_target_id = f'{old_target_id}_{len(self.targets_new)}_'
 
         if old_target_id != new_target_id:
             self.targets_new.add(new_target_id)
             target.id = new_target_id
-            # 记录修改的变量名，之后会使用到
+            # 记录修改的变量名，同步到 args_map，确保赋值右边引用也被替换
+            # 这样在 visit_Assign 处理右边时，会用 args_map 替换变量名
             self.args_map[old_target_id] = new_target_id
 
+        # 处理常量值的情况（如 1 -> ONE）
         if isinstance(target, ast.Constant):
             old_target_value = str(target.value)
             if old_target_value in self.args_map:
@@ -480,23 +494,47 @@ class RenameTransformer(ast.NodeTransformer):
         return target
 
     def visit_Assign(self, node):
-        # 调整位置，支持循环赋值
-        # _A = _A+1 调整成 _A_001 = _A_000 + 1
+        """处理赋值语句的完整重命名流程
+        
+        处理步骤：
+        1. 先递归处理子节点（generic_visit），确保右边表达式先被处理
+        2. 重命名赋值目标（左边），调用 __visit_Assign
+        3. 重命名赋值值（右边），使用 args_map 替换变量引用
+        
+        支持循环赋值：
+        - _A = _A+1 调整成 _A_0_ = _A + 1
+        - 通过先处理右边再处理左边，实现循环依赖的重命名
+        
+        元组解包：
+        - A, B = func() 会分别重命名 A 和 B
+        - target.elts 是元组的元素列表
+        
+        为什么先 generic_visit：
+        - 确保右边的表达式先被处理（如函数调用、嵌套表达式）
+        - 这样在处理左边时，右边的变量引用已经被正确处理
+        """
+        # 先递归处理子节点，确保右边表达式先被处理
         self.generic_visit(node)
 
-        # 提取输出变量名
+        # 提取并重命名输出变量名（赋值目标）
         for i, target in enumerate(node.targets):
             if isinstance(target, ast.Tuple):
+                # 元组解包：A, B = func()
+                # target.elts 是元组的元素列表，如 [A, B]
                 for j, t in enumerate(target.elts):
                     target.elts[j] = self.__visit_Assign(t)
             else:
+                # 普通赋值：A = 1
                 node.targets[i] = self.__visit_Assign(target)
 
-        # 处理 alpha=close 这种情况
+        # 处理赋值右边的变量引用
+        # 如果右边是变量名，用 args_map 替换
+        # 例如：A = B，如果 B -> C，变成 A = C
         if isinstance(node.value, ast.Name):
             self.args_old.add(node.value.id)
             node.value.id = self.args_map.get(node.value.id, node.value.id)
             self.args_new.add(node.value.id)
+        # 如果右边是常量，也可能需要替换（如 1 -> ONE）
         if isinstance(node.value, ast.Constant):
             old_node_value = str(node.value.value)
             if old_node_value in self.args_map:
