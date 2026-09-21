@@ -37,17 +37,19 @@ raw, exprs_src = sources_to_exprs(globals().copy(), exprs_src, convert_xor=False
 
 tool = ExprTool()
 # 子表达式在前，原表式在最后
-exprs_dst, syms_dst = tool.merge("date", "asset", **exprs_src)
+exprs_dst, syms_dst = tool.merge("date", "asset", exprs_src, skip_simplify=False)
 
 # 提取公共表达式
-exprs_dict = tool.cse(exprs_dst, symbols_repl=numbered_symbols('x_'), symbols_redu=exprs_src.keys())
+# exprs_src 是列表，直接使用它作为 exprs_src
+exprs_dict = tool.cse(exprs_dst, symbols_repl=numbered_symbols('x_'), exprs_src=exprs_src)
 
 # 创建DAG
 G = create_dag_exprs(exprs_dict)
 G = init_dag_exprs(G, tool.get_current_func, tool.get_current_func_kwargs, "date", "asset")
 
-keep_nodes = [k for k in exprs_src.keys() if not k.startswith('_')]
-# keep_nodes = exprs_src.keys()
+# exprs_src 是列表，提取非下划线开头的变量名
+keep_nodes = [k[0] for k in exprs_src if not k[0].startswith('_')]
+# keep_nodes = exprs_src
 # 以下可以看到节点的合并过程
 zero = zero_outdegree(G)
 for z in zero:

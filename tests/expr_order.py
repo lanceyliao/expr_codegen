@@ -31,7 +31,7 @@ def _code_block_1():
     E = A + B
 
 
-def _code_block_2():
+def _code_block_1():
     # 要求能将ts_提前
     ma_10 = ts_mean(CLOSE, 10)
     MAMA_20 = ts_mean(ma_10, 20)

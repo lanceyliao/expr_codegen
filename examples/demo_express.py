@@ -47,7 +47,22 @@ codegen_exec(None, _code_block_1, _code_block_2, over_null='partition_by', outpu
 code.seek(0)
 code.read()  # 读取代码
 
-# TODO 替换成合适的数据
-df = pl.DataFrame()
+# 创建测试数据
+import numpy as np
+import pandas as pd
+dates = pd.date_range(start="2020-01-01", end="2023-12-31", freq="D")
+assets = ["A", "B", "C", "D", "E"]
+data = []
+for asset in assets:
+    for date in dates:
+        data.append({
+            "date": date,
+            "asset": asset,
+            "market_cap": np.random.uniform(1e8, 1e12),
+            "corr": np.random.uniform(-1, 1),
+            "ONE": 1.0
+        })
+df = pl.DataFrame(data)
 df = codegen_exec(df.lazy(), _code_block_1, _code_block_2, over_null='partition_by').collect()  # Lazy CPU
-df = codegen_exec(df.lazy(), _code_block_1, _code_block_2, over_null='partition_by').collect(engine="gpu")  # Lazy GPU
+# df = codegen_exec(df.lazy(), _code_block_1, _code_block_2, over_null='partition_by').collect(engine="gpu")  # Lazy GPU (需要安装 cudf-polars)
+print(df)

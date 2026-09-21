@@ -195,23 +195,69 @@ class SyntaxTransformer(ast.NodeTransformer):
         2. 交换 test 和 body 实现条件反转
         3. 转换为 if_else 函数调用
         
-        转换示例：
-        - a if b else c -> if_else(b, a, c)
-        - b or True if a else c -> if_else(a, b, c) （条件反转）
+        转换流程：
+        场景1：正常三元表达式
+        - 用户输入: a if b else c
+        - source_replace: 不处理
+        - AST: IfExp(test=b, body=a, orelse=c)
+        - 转换: if_else(b, a, c)
+        
+        场景2：自定义语法 C?T:F
+        - 用户输入: C?T:F
+        - source_replace: C or True if( T )else F
+        - AST: IfExp(test=T, body=C or True, orelse=F)
+        - 详细 AST 结构:
+          Module(
+            body=[
+              Expr(
+                value=IfExp(
+                  test=Name(id='T', ctx=Load()),
+                  body=BoolOp(
+                    op=Or(),
+                    values=[
+                      Name(id='C', ctx=Load()),
+                      Constant(value=True)]),
+                  orelse=Name(id='F', ctx=Load())))],
+            type_ignores=[])
+        - 检测到 or True 标记，交换: IfExp(test=C, body=T, orelse=F)
+        - 转换: if_else(C, T, F)
+        
+        嵌套场景：A?B?C:D:E
+        - source_replace: A or True if( B or True if( C )else D )else E
+        - AST: 外层 IfExp 的 orelse 部分包含内层 IfExp
+        - visit 顺序: 前序遍历，先访问外层，再访问内层
+        - 转换顺序: 先转换内层，再转换外层（因为 generic_visit 会递归）
         
         注意：
-        - 需要在 source_replace 中预先处理三元表达式
-        - 使用 or True 标记需要反转的条件
+        - or True 是 source_replace 添加的特殊标记
+        - 标记表示这个三元表达式来自 C?T:F 语法
+        - 需要交换 test 和 body 恢复原始语义
         """
         # 三元表达式。需要在外部提前替换成or True if else
         # 只要body区域，出现了or True，就认为是特殊处理过的
+        # node.body 是三元表达式的真值部分（条件为真时返回的值）
+        # 在场景2中，C?T:F 转换为 C or True if( T )else F
+        # 此时 node.body = C or True，这是一个 BoolOp 节点
         if isinstance(node.body, ast.BoolOp) and isinstance(node.body.op, ast.Or):
+            # BoolOp 是布尔运算符节点，表示 or/and 等布尔运算
+            # node.body.op 是具体的运算符，这里是 ast.Or（或运算）
+            # node.body.values 是 BoolOp 的操作数列表
+            # 对于 "C or True"，values = [C, True]
+            # node.body.values[0] 是第一个操作数 C
+            # node.body.values[-1] 是最后一个操作数 True
             if isinstance(node.body.values[-1], ast.Constant):
+                # 检查最后一个操作数是否为常量（True/False/数字等）
                 if node.body.values[-1].value:
+                    # 检查常量的值是否为真值（True、非零数字等）
+                    # 如果是，说明这是 source_replace 添加的特殊标记
                     # 交换 test 和 body，实现条件反转
+                    # 例如: C or True if( T )else F -> T if C else F
+                    # node.test 原来是 T，现在变成 C（node.body.values[0]）
+                    # node.body 原来是 C or True，现在变成 T（原来的 test）
                     node.test, node.body = node.body.values[0], node.test
 
         # 转换为 if_else 函数调用
+        # 参数顺序: 条件, 真值, 假值
         node = ast.Call(
             func=ast.Name(id='if_else', ctx=ast.Load()),
             args=[node.test, node.body, node.orelse],

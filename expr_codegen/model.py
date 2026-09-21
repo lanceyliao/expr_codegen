@@ -227,6 +227,17 @@ def chain_create(nested_list):
 def create_dag_exprs(exprs):
     """根据表达式列表生成有向无环图（DAG）
     
+    案例说明：
+    输入表达式：A = B + C, B = D
+    生成的图结构：
+        D -> B -> A
+        C -> A
+    
+    其中：
+    - D, C 是源节点（入度为0，表示原始数据列）
+    - B 是中间节点（依赖 D）
+    - A 是最终输出节点（依赖 B 和 C）
+    
     高级用法：
     1. 使用 networkx.DiGraph 创建有向无环图
     2. 节点表示表达式，边表示依赖关系
@@ -237,15 +248,33 @@ def create_dag_exprs(exprs):
     - 边：从依赖节点指向被依赖节点
     - 例如：A = B + C，则有边 B->A 和 C->A
     
+    关于 symbol、expr、comment：
+    - 这些不是 Polars 表达式的属性，而是 SymPy 表达式系统的属性
+    - symbol: SymPy 的 Symbol 对象，表示变量名（如 'A', 'B', 'CLOSE'）
+    - expr: SymPy 的表达式对象，表示数学表达式（如 B + C, ts_mean(CLOSE, 10)）
+    - comment: 注释字符串，用于代码生成时的注释
+    
+    各步骤说明：
+    1. 创建空的有向无环图
+    2. 遍历表达式列表，为每个表达式添加节点和边
+    3. 如果表达式是符号（如 A = OPEN），直接添加边 OPEN->A
+    4. 如果表达式是复合表达式（如 A = B + C），提取所有依赖符号，添加边 B->A, C->A
+    5. 如果表达式是常量（如 A = 1.0），添加边 '1.0'->A
+    6. 为入度为0的节点（源节点）添加属性，使其成为完整的 SymPy 符号
+    
     Parameters
     ----------
     exprs : list
         表达式列表，每个元素为 (symbol, expr, comment)
+        - symbol: SymPy Symbol 对象，表示变量名
+        - expr: SymPy 表达式对象，表示数学表达式
+        - comment: 字符串，表示注释
     
     Returns
     -------
     nx.DiGraph
         表达式依赖关系的有向无环图
+        每个节点包含属性：symbol, expr, comment
     """
     # 创建有向无环图
     G = nx.DiGraph()
@@ -254,17 +283,25 @@ def create_dag_exprs(exprs):
         # if symbol.name == 'GP_0':
         #     test = 1
         if expr.is_Symbol:
-            # 如果表达式是符号（如 OPEN），直接添加边
+            # 如果表达式是符号（如 A = OPEN），直接添加边
+            # 例如：A = OPEN，则添加边 OPEN->A
             G.add_node(symbol.name, symbol=symbol, expr=expr, comment=comment)
             G.add_edge(expr.name, symbol.name)
         else:
-            # 添加中间节点
+            # 添加中间节点（复合表达式）
+            # 例如：A = B + C，则添加节点 A，并提取依赖符号 B, C
             G.add_node(symbol.name, symbol=symbol, expr=expr, comment=comment)
+            # 提取表达式中的所有符号（变量名）
             syms = get_symbols(expr, return_str=True)
             for sym in syms:
                 # 由于边的原因，这里会主动生成一些源节点
+                # 为每个依赖符号添加边，建立依赖关系
+                # 例如：A = B + C，则添加边 B->A, C->A
+                # 由于边的原因，这里会主动生成一些源节点（如 B, C）
                 G.add_edge(sym, symbol.name)
             if len(syms) == 0:
+                # 处理常量表达式（如 A = log(1/2400)）
+                # 常量表达式没有依赖符号，需要特殊处理
                 # GP_0033=log(1/2400) 这种常量表达式
                 if hasattr(expr, 'name'):
                     G.add_edge(expr.name, symbol.name)
@@ -273,11 +310,13 @@ def create_dag_exprs(exprs):
 
     # 源始因子，添加属性
     # zero_indegree 找到入度为0的节点（没有依赖的节点）
+    # 这些节点通常是原始数据列（如 OPEN, CLOSE, VOLUME）
+    # 需要为它们添加完整的 SymPy 符号属性，以便后续处理
     for node in zero_indegree(G):
-        s = symbols(node)
-        G.nodes[node]['symbol'] = s
-        G.nodes[node]['expr'] = s
-        G.nodes[node]['comment'] = "#"
+        s = symbols(node)  # 将字符串转换为 SymPy Symbol
+        G.nodes[node]['symbol'] = s  # 添加 symbol 属性
+        G.nodes[node]['expr'] = s    # 添加 expr 属性（常量表达式 expr 就是 symbol 本身）
+        G.nodes[node]['comment'] = "#"  # 添加注释（源节点标记为 #）
     #
     # for node in zero_outdegree(G):
     #     print(11, G.nodes[node]['comment'])
